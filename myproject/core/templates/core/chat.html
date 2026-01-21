@@ -1,0 +1,237 @@
+{% extends 'core/base.html' %}
+{% block title %}Chat App{% endblock %}
+{% block content %}
+<div class="container">
+    <div class="sidebar" id="sidebar" style="display:none;">
+        <div class="sidebar-section">
+            <h3 style="display:flex;align-items:center;justify-content:space-between;">
+                <span>Agents</span>
+                <a href="{% url 'create_agent' %}" title="Add Agent" style="color:#333;font-size:1.3em;text-decoration:none;padding:0 0.2em;">&#43;</a>
+            </h3>
+            <ul class="agent-list" id="agent-list"></ul>
+        </div>
+        <div class="sidebar-section">
+            <h3 style="display:flex;align-items:center;justify-content:space-between;">
+                <span>Chats</span>
+                <button id="add-chat-btn" title="Add Chat" style="background:none;border:none;color:#333;font-size:1.3em;cursor:pointer;padding:0 0.2em;">&#43;</button>
+            </h3>
+            <ul class="chat-list" id="chat-list"></ul>
+        </div>
+
+        <!-- Modal for creating chat -->
+        <div id="chat-modal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0005;z-index:1000;align-items:center;justify-content:center;">
+            <div style="background:#fff;padding:2em;border-radius:10px;min-width:300px;max-width:90vw;box-shadow:0 2px 12px #0002;">
+                <h3 style="margin-top:0;">Create Chat</h3>
+                <form id="create-chat-form" style="display:flex;flex-direction:column;gap:1em;">
+                    <label for="agent-select">Select Agent:</label>
+                    <select id="agent-select" name="agent" required style="padding:0.7em;border:1px solid #ccc;border-radius:5px;"></select>
+                    <label for="chat-title">Chat Title:</label>
+                    <input type="text" id="chat-title" name="title" required style="padding:0.7em;border:1px solid #ccc;border-radius:5px;">
+                    <div style="display:flex;gap:1em;justify-content:flex-end;">
+                        <button type="button" id="cancel-chat-btn" style="padding:0.5em 1.2em;background:#eee;border:none;border-radius:5px;">Cancel</button>
+                        <button type="submit" style="padding:0.5em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;">Create</button>
+                    </div>
+                </form>
+                <div id="chat-modal-result" style="margin-top:1em;text-align:center;"></div>
+            </div>
+        </div>
+    </div>
+    <div class="main">
+        <h2>Welcome to the Chat App</h2>
+        <div id="chat-content"></div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+    function renderSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        if (isLoggedIn()) {
+            sidebar.style.display = 'flex';
+            fetchAgents();
+            fetchChats();
+        } else {
+            sidebar.style.display = 'none';
+        }
+    }
+    async function fetchAgents() {
+        const agentList = document.getElementById('agent-list');
+        const token = localStorage.getItem('access');
+        if (!token) {
+            agentList.innerHTML = '';
+            return;
+        }
+        const response = await fetch("{% url 'user_agents' %}", {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await response.json();
+        if (data.agents && data.agents.length) {
+            agentList.innerHTML = data.agents.map(a =>
+                `<li style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>${a.name}</span>
+                    <a href="/agents/update/${a.id}/" title="Edit Agent" style="color:#333;font-size:1.1em;text-decoration:none;padding-left:0.5em;">
+                        <span style="display:inline-block;vertical-align:middle;">&#9998;</span>
+                    </a>
+                </li>`
+            ).join('');
+        } else {
+            agentList.innerHTML = '<li style="color:#888;">No agents</li>';
+        }
+    }
+    let agentsCache = [];
+    async function fetchAgents() {
+        const agentList = document.getElementById('agent-list');
+        const token = localStorage.getItem('access');
+        if (!token) {
+            agentList.innerHTML = '';
+            return;
+        }
+        const response = await fetch("{% url 'user_agents' %}", {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await response.json();
+        agentsCache = data.agents || [];
+        if (data.agents && data.agents.length) {
+            agentList.innerHTML = data.agents.map(a =>
+                `<li style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>${a.name}</span>
+                    <a href="/agents/update/${a.id}/" title="Edit Agent" style="color:#333;font-size:1.1em;text-decoration:none;padding-left:0.5em;">
+                        <span style="display:inline-block;vertical-align:middle;">&#9998;</span>
+                    </a>
+                </li>`
+            ).join('');
+        } else {
+            agentList.innerHTML = '<li style="color:#888;">No agents</li>';
+        }
+    }
+
+    async function fetchChats() {
+        const chatList = document.getElementById('chat-list');
+        const token = localStorage.getItem('access');
+        if (!token) {
+            chatList.innerHTML = '';
+            return;
+        }
+        const response = await fetch("{% url 'user_chats' %}", {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await response.json();
+        if (data.chats && data.chats.length) {
+            chatList.innerHTML = data.chats.map(c =>
+                `<li style="cursor:pointer;" onclick="openChat(${c.id}, '${c.title.replace(/'/g, "&#39;")}', '${c.agent__name.replace(/'/g, "&#39;")}' )">
+                    <span>${c.title}</span> <span style='color:#888;font-size:0.9em;'>(${c.agent__name})</span>
+                </li>`
+            ).join('');
+        } else {
+            chatList.innerHTML = '<li style="color:#888;">No chats</li>';
+        }
+    }
+
+    async function openChat(chatId, chatTitle, agentName) {
+        // Fetch messages for this chat
+        const token = localStorage.getItem('access');
+        const response = await fetch(`/api/chats/${chatId}/messages/`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await response.json();
+        showChatInterface(chatId, chatTitle, null, data.messages || [], agentName);
+    }
+
+    // Show chat interface in main area (now with messages)
+    function showChatInterface(chatId, chatTitle, agentId, messages, agentName) {
+        const main = document.querySelector('.main');
+        main.innerHTML = `
+            <h2>Chat: ${chatTitle} <span style='color:#888;font-size:0.8em;'>(${agentName || ''})</span></h2>
+            <div id="chat-messages" style="height:300px;overflow-y:auto;border:1px solid #ccc;border-radius:5px;padding:1em;background:#fafafa;margin-bottom:1em;"></div>
+            <form id="send-message-form" style="display:flex;gap:0.5em;">
+                <input type="text" id="message-input" placeholder="Type a message..." style="flex:1;padding:0.7em;border:1px solid #ccc;border-radius:5px;">
+                <button type="submit" style="padding:0.7em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;">Send</button>
+            </form>
+        `;
+        const chatMessages = document.getElementById('chat-messages');
+        if (messages && messages.length) {
+            chatMessages.innerHTML = messages.map(m => `<div style='margin-bottom:0.5em;'><b>${m.user}</b>: ${m.content}</div>`).join('');
+        } else {
+            chatMessages.innerHTML = '<div style="color:#888;">No messages yet.</div>';
+        }
+        document.getElementById('send-message-form').onsubmit = async function(e) {
+            e.preventDefault();
+            const message = document.getElementById('message-input').value;
+            if (!message) return;
+            // TODO: Send message to backend and update chat
+            chatMessages.innerHTML += `<div style='margin-bottom:0.5em;'><b>You:</b> ${message}</div>`;
+            document.getElementById('message-input').value = '';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        };
+    }
+
+    // Modal logic for chat creation
+    function openChatModal() {
+        const modal = document.getElementById('chat-modal');
+        const agentSelect = document.getElementById('agent-select');
+        agentSelect.innerHTML = agentsCache.length ? agentsCache.map(a => `<option value="${a.id}">${a.name}</option>`).join('') : '<option disabled>No agents</option>';
+        document.getElementById('chat-title').value = '';
+        document.getElementById('chat-modal-result').innerText = '';
+        modal.style.display = 'flex';
+    }
+    function closeChatModal() {
+        document.getElementById('chat-modal').style.display = 'none';
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        renderSidebar();
+        document.getElementById('add-chat-btn').onclick = openChatModal;
+        document.getElementById('cancel-chat-btn').onclick = closeChatModal;
+        document.getElementById('create-chat-form').onsubmit = async function(e) {
+            e.preventDefault();
+            const agentId = document.getElementById('agent-select').value;
+            const title = document.getElementById('chat-title').value;
+            const token = localStorage.getItem('access');
+            const resultDiv = document.getElementById('chat-modal-result');
+            if (!agentId || !title) {
+                resultDiv.innerText = 'Please select an agent and enter a title.';
+                return;
+            }
+            const response = await fetch("{% url 'create_chat' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? 'Bearer ' + token : ''
+                },
+                body: JSON.stringify({ agent: agentId, title })
+            });
+            const data = await response.json();
+            if (response.ok && data.id) {
+                closeChatModal();
+                // Show chat interface for the new chat
+                showChatInterface(data.id, title, agentId);
+                fetchChats();
+            } else {
+                resultDiv.innerText = data.error || 'Failed to create chat.';
+            }
+        };
+    });
+
+    // Show chat interface in main area
+    function showChatInterface(chatId, chatTitle, agentId) {
+        const main = document.querySelector('.main');
+        main.innerHTML = `
+            <h2>Chat: ${chatTitle}</h2>
+            <div id="chat-messages" style="height:300px;overflow-y:auto;border:1px solid #ccc;border-radius:5px;padding:1em;background:#fafafa;margin-bottom:1em;"></div>
+            <form id="send-message-form" style="display:flex;gap:0.5em;">
+                <input type="text" id="message-input" placeholder="Type a message..." style="flex:1;padding:0.7em;border:1px solid #ccc;border-radius:5px;">
+                <button type="submit" style="padding:0.7em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;">Send</button>
+            </form>
+        `;
+        document.getElementById('send-message-form').onsubmit = async function(e) {
+            e.preventDefault();
+            const message = document.getElementById('message-input').value;
+            if (!message) return;
+            // TODO: Send message to backend and update chat
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML += `<div style='margin-bottom:0.5em;'><b>You:</b> ${message}</div>`;
+            document.getElementById('message-input').value = '';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        };
+    }
+</script>
+{% endblock %}

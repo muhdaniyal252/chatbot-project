@@ -1,0 +1,9 @@
+langchain==1.2.6
+langchain-google-genai==4.2.0
+fastapi
+uvicorn
+python-multipart
+pydantic
+djangorestframework
+djangorestframework-simplejwt
+python-dotenv
