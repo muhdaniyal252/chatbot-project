@@ -26,7 +26,7 @@ def chat_messages(request, chat_id):
 		return JsonResponse({'messages': []})
 	messages = Message.objects.filter(chat=chat).select_related('user').order_by('timestamp')
 	msg_list = [
-		{'id': m.id, 'user': m.user.username, 'content': m.content, 'timestamp': m.timestamp.strftime('%Y-%m-%d %H:%M:%S')} # type: ignore
+		{'id': m.id, 'user': m.user.username, 'content': m.content, 'by': m.message_by, 'timestamp': m.timestamp.strftime('%Y-%m-%d %H:%M:%S')} # type: ignore
 		for m in messages
 	]
 	return JsonResponse({'messages': msg_list})
@@ -68,6 +68,7 @@ def user_agents(request):
 		return JsonResponse({'agents': []})
 	agents = Agent.objects.filter(user=user).values('id', 'name')
 	return JsonResponse({'agents': list(agents)})
+
 def chat_home(request):
 	return render(request, 'core/chat.html')
 

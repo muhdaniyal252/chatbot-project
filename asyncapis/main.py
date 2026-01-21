@@ -1,23 +1,30 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
+from fastapi import FastAPI, WebSocket
 from pathlib import Path
 import sys
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+project_path = BASE_DIR / "myproject"
+sys.path.append(str(project_path))
 
-from myproject.utils import process_message
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "myproject.settings")
+import django
+django.setup()
+
+#the utils is in basedir/myproject/utils.py
+from utils import process_message #type: ignore
 
 app = FastAPI()
 
-class SendMessageRequest(BaseModel):
-    message: str
-    chatid: int
-    userid: int
-
-@app.post("/send-message")
-async def send_message(data: SendMessageRequest):
-    # Call the processing function in core/utils.py
-    result = process_message(data.message, data.chatid, data.userid)
-    return {"status": "success", "result": result}
+@app.websocket("/send-message")
+async def websocket_send_message(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_json()
+        message = data.get("message")
+        chatid = data.get("chatid")
+        userid = data.get("userid")
+        result = await process_message(message, chatid, userid)
+        await websocket.send_json({"status": "success", "result": result})

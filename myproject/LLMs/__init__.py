@@ -1,4 +1,4 @@
-from gemini import GeminiLLM
+from .gemini import GeminiLLM
 
 llms = {
     "gemini": GeminiLLM,
@@ -6,4 +6,4 @@ llms = {
 
 def get_llm(name):
     llm = llms.get(name)
-    return llms() # type: ignore
+    return llm() # type: ignore

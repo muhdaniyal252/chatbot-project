@@ -42,8 +42,28 @@
     </div>
 </div>
 {% endblock %}
+
 {% block extra_js %}
 <script>
+    // Get user ID from JWT access token
+    function parseJwt (token) {
+        try {
+            return JSON.parse(atob(token.split('.')[1]));
+        } catch (e) {
+            return {};
+        }
+    }
+
+    let USER_ID = null;
+    const accessToken = localStorage.getItem('access');
+    if (accessToken) {
+        const payload = parseJwt(accessToken);
+        USER_ID = payload.user_id || payload.id || null;
+    }
+
+    let agentsCache = [];
+
+    // Sidebar rendering
     function renderSidebar() {
         const sidebar = document.getElementById('sidebar');
         if (isLoggedIn()) {
@@ -54,31 +74,8 @@
             sidebar.style.display = 'none';
         }
     }
-    async function fetchAgents() {
-        const agentList = document.getElementById('agent-list');
-        const token = localStorage.getItem('access');
-        if (!token) {
-            agentList.innerHTML = '';
-            return;
-        }
-        const response = await fetch("{% url 'user_agents' %}", {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        const data = await response.json();
-        if (data.agents && data.agents.length) {
-            agentList.innerHTML = data.agents.map(a =>
-                `<li style="display:flex;align-items:center;justify-content:space-between;">
-                    <span>${a.name}</span>
-                    <a href="/agents/update/${a.id}/" title="Edit Agent" style="color:#333;font-size:1.1em;text-decoration:none;padding-left:0.5em;">
-                        <span style="display:inline-block;vertical-align:middle;">&#9998;</span>
-                    </a>
-                </li>`
-            ).join('');
-        } else {
-            agentList.innerHTML = '<li style="color:#888;">No agents</li>';
-        }
-    }
-    let agentsCache = [];
+
+    // Fetch agents
     async function fetchAgents() {
         const agentList = document.getElementById('agent-list');
         const token = localStorage.getItem('access');
@@ -91,8 +88,8 @@
         });
         const data = await response.json();
         agentsCache = data.agents || [];
-        if (data.agents && data.agents.length) {
-            agentList.innerHTML = data.agents.map(a =>
+        if (agentsCache.length) {
+            agentList.innerHTML = agentsCache.map(a =>
                 `<li style="display:flex;align-items:center;justify-content:space-between;">
                     <span>${a.name}</span>
                     <a href="/agents/update/${a.id}/" title="Edit Agent" style="color:#333;font-size:1.1em;text-decoration:none;padding-left:0.5em;">
@@ -105,6 +102,7 @@
         }
     }
 
+    // Fetch chats
     async function fetchChats() {
         const chatList = document.getElementById('chat-list');
         const token = localStorage.getItem('access');
@@ -127,8 +125,8 @@
         }
     }
 
+    // Open chat and fetch messages
     async function openChat(chatId, chatTitle, agentName) {
-        // Fetch messages for this chat
         const token = localStorage.getItem('access');
         const response = await fetch(`/api/chats/${chatId}/messages/`, {
             headers: { 'Authorization': 'Bearer ' + token }
@@ -137,9 +135,10 @@
         showChatInterface(chatId, chatTitle, null, data.messages || [], agentName);
     }
 
-    // Show chat interface in main area (now with messages)
-    function showChatInterface(chatId, chatTitle, agentId, messages, agentName) {
+    // Unified Chat Interface function (previous messages + WebSocket + user/AI distinction)
+    function showChatInterface(chatId, chatTitle, agentId, messages = [], agentName = '') {
         const main = document.querySelector('.main');
+
         main.innerHTML = `
             <h2>Chat: ${chatTitle} <span style='color:#888;font-size:0.8em;'>(${agentName || ''})</span></h2>
             <div id="chat-messages" style="height:300px;overflow-y:auto;border:1px solid #ccc;border-radius:5px;padding:1em;background:#fafafa;margin-bottom:1em;"></div>
@@ -148,18 +147,83 @@
                 <button type="submit" style="padding:0.7em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;">Send</button>
             </form>
         `;
+
         const chatMessages = document.getElementById('chat-messages');
-        if (messages && messages.length) {
-            chatMessages.innerHTML = messages.map(m => `<div style='margin-bottom:0.5em;'><b>${m.user}</b>: ${m.content}</div>`).join('');
+
+        // Render previous messages
+        if (messages.length) {
+            chatMessages.innerHTML = messages.map(m => {
+                const sender = m.by === 'ai' ? 'AI' : m.user;
+                const color = m.by === 'ai' ? '#007BFF' : '#333';
+                const align = m.by === 'ai' ? 'flex-start' : 'flex-end';
+                return `
+                    <div style="display:flex;justify-content:${align};margin-bottom:0.5em;">
+                        <div style="background:${m.by === 'ai' ? '#e1f0ff' : '#dcdcdc'};padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
+                            ${m.content}
+                            <div style="font-size:0.7em;color:#888;text-align:right;">${m.timestamp}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
         } else {
             chatMessages.innerHTML = '<div style="color:#888;">No messages yet.</div>';
         }
+
+        let ws = null;
+
         document.getElementById('send-message-form').onsubmit = async function(e) {
             e.preventDefault();
             const message = document.getElementById('message-input').value;
             if (!message) return;
-            // TODO: Send message to backend and update chat
-            chatMessages.innerHTML += `<div style='margin-bottom:0.5em;'><b>You:</b> ${message}</div>`;
+
+            const userId = USER_ID;
+
+            // Initialize WebSocket if not connected
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                ws = new WebSocket('ws://localhost:8001/send-message');
+
+                ws.onopen = function() {
+                    ws.send(JSON.stringify({ message, chatid: chatId, userid: userId }));
+                };
+
+                ws.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    if (data.status === 'success' && data.result) {
+                        const chatMessages = document.getElementById('chat-messages');
+
+                        // AI response
+                        chatMessages.innerHTML += `
+                            <div style="display:flex;justify-content:flex-start;margin-bottom:0.5em;">
+                                <div style="background:#e1f0ff;padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
+                                    ${data.result}
+                                    <div style="font-size:0.7em;color:#888;text-align:right;">${new Date().toLocaleTimeString()}</div>
+                                </div>
+                            </div>
+                        `;
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }
+                };
+
+                ws.onerror = function(err) {
+                    console.error('WebSocket error:', err);
+                };
+
+                ws.onclose = function() {
+                    console.log('WebSocket closed.');
+                };
+            } else {
+                ws.send(JSON.stringify({ message, chatid: chatId, userid: userId }));
+            }
+
+            // Append user's message immediately
+            chatMessages.innerHTML += `
+                <div style="display:flex;justify-content:flex-end;margin-bottom:0.5em;">
+                    <div style="background:#dcdcdc;padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
+                        <b style="color:#333;">You:</b> ${message}
+                        <div style="font-size:0.7em;color:#888;text-align:right;">${new Date().toLocaleTimeString()}</div>
+                    </div>
+                </div>
+            `;
             document.getElementById('message-input').value = '';
             chatMessages.scrollTop = chatMessages.scrollHeight;
         };
@@ -174,9 +238,11 @@
         document.getElementById('chat-modal-result').innerText = '';
         modal.style.display = 'flex';
     }
+
     function closeChatModal() {
         document.getElementById('chat-modal').style.display = 'none';
     }
+
     document.addEventListener('DOMContentLoaded', function() {
         renderSidebar();
         document.getElementById('add-chat-btn').onclick = openChatModal;
@@ -202,7 +268,6 @@
             const data = await response.json();
             if (response.ok && data.id) {
                 closeChatModal();
-                // Show chat interface for the new chat
                 showChatInterface(data.id, title, agentId);
                 fetchChats();
             } else {
@@ -210,28 +275,5 @@
             }
         };
     });
-
-    // Show chat interface in main area
-    function showChatInterface(chatId, chatTitle, agentId) {
-        const main = document.querySelector('.main');
-        main.innerHTML = `
-            <h2>Chat: ${chatTitle}</h2>
-            <div id="chat-messages" style="height:300px;overflow-y:auto;border:1px solid #ccc;border-radius:5px;padding:1em;background:#fafafa;margin-bottom:1em;"></div>
-            <form id="send-message-form" style="display:flex;gap:0.5em;">
-                <input type="text" id="message-input" placeholder="Type a message..." style="flex:1;padding:0.7em;border:1px solid #ccc;border-radius:5px;">
-                <button type="submit" style="padding:0.7em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;">Send</button>
-            </form>
-        `;
-        document.getElementById('send-message-form').onsubmit = async function(e) {
-            e.preventDefault();
-            const message = document.getElementById('message-input').value;
-            if (!message) return;
-            // TODO: Send message to backend and update chat
-            const chatMessages = document.getElementById('chat-messages');
-            chatMessages.innerHTML += `<div style='margin-bottom:0.5em;'><b>You:</b> ${message}</div>`;
-            document.getElementById('message-input').value = '';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        };
-    }
 </script>
 {% endblock %}

@@ -1,7 +1,9 @@
 
 from langchain_core.prompts import PromptTemplate
-from myproject.LLMs import get_llm
-from myproject.core.models import User, Chat, Message, Agent
+from LLMs import get_llm
+
+from core.models import User, Chat, Message, Agent
+from asgiref.sync import sync_to_async
 
 llm = get_llm("gemini")
 
@@ -26,12 +28,12 @@ prompt = PromptTemplate(
     template=template,
 )
 
-def process_message(message, chatid, userid):
-    user = User.objects.get(id=userid)
-    chat = Chat.objects.get(id=chatid, user=user)
-    messages = Message.objects.filter(chat=chat).order_by('-timestamp')[:10]
+async def process_message(message, chatid, userid):
+    user = await sync_to_async(User.objects.get)(id=userid)
+    chat = await sync_to_async(Chat.objects.get)(id=chatid, user=user)
+    messages = await sync_to_async(lambda: list(Message.objects.filter(chat=chat).order_by('-timestamp')[:10]))()
     message_texts = [msg.content for msg in messages]
-    agent = chat.agent
+    agent = await sync_to_async(lambda: chat.agent)()
 
-    user_message = Message.objects.create(chat=chat, user=user, content=message)
-    
+    user_message = await sync_to_async(Message.objects.create)(chat=chat, user=user, content=message)
+    return user_message.id #type: ignore

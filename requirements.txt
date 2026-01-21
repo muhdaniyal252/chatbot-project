@@ -1,5 +1,6 @@
 langchain==1.2.6
 langchain-google-genai==4.2.0
+psycopg[binary]
 fastapi
 uvicorn
 python-multipart
