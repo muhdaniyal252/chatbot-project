@@ -15,6 +15,7 @@ class Chat(models.Model):
 	title = models.CharField(max_length=255)
 	agent = models.ForeignKey(Agent, related_name='chats', on_delete=models.CASCADE)
 	user = models.ForeignKey(User, related_name='chats', on_delete=models.CASCADE)
+	summary = models.TextField(null=True)
     
 	def __str__(self):
 		return self.title
