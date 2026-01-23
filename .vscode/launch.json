@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
-            "cwd": "${workspaceFolder}/asyncapis",
+            "cwd": "${workspaceFolder}/myproject/asyncapis",
             "args": [
                 "main:app",
                 "--reload",

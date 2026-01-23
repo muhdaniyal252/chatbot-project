@@ -144,22 +144,36 @@
             <div id="chat-messages" style="height:300px;overflow-y:auto;border:1px solid #ccc;border-radius:5px;padding:1em;background:#fafafa;margin-bottom:1em;"></div>
             <form id="send-message-form" style="display:flex;gap:0.5em;">
                 <input type="text" id="message-input" placeholder="Type a message..." style="flex:1;padding:0.7em;border:1px solid #ccc;border-radius:5px;">
-                <button type="submit" style="padding:0.7em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;">Send</button>
+                <button type="submit" id="send-btn" style="padding:0.7em 1.2em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;display:flex;align-items:center;justify-content:center;">
+                    <span style="font-size:1.3em;" title="Send">&#10148;</span>
+                </button>
+                <button type="button" id="mic-btn" style="padding:0.7em 1.2em;background:#007BFF;color:#fff;border:none;border-radius:5px;font-weight:bold;display:flex;align-items:center;justify-content:center;">
+                    <span id="mic-icon" style="font-size:1.3em;" title="Record">&#127908;</span>
+                </button>
             </form>
         `;
 
         const chatMessages = document.getElementById('chat-messages');
 
-        // Render previous messages
+        // Render previous messages (markdown)
         if (messages.length) {
             chatMessages.innerHTML = messages.map(m => {
                 const sender = m.by === 'ai' ? 'AI' : m.user;
                 const color = m.by === 'ai' ? '#007BFF' : '#333';
                 const align = m.by === 'ai' ? 'flex-start' : 'flex-end';
+                // If message has audio_url or synthesized_audio_url, render above text
+                let audioHtml = '';
+                if (m.audio_url) {
+                    audioHtml += `<div style="margin-bottom:0.3em;"><audio controls src="${m.audio_url}" style="width:100%;"></audio></div>`;
+                }
+                if (m.synthesized_audio_url) {
+                    audioHtml += `<div style="margin-bottom:0.3em;"><audio controls src="${m.synthesized_audio_url}" style="width:100%;"></audio></div>`;
+                }
                 return `
                     <div style="display:flex;justify-content:${align};margin-bottom:0.5em;">
                         <div style="background:${m.by === 'ai' ? '#e1f0ff' : '#dcdcdc'};padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
-                            ${m.content}
+                            ${audioHtml}
+                            <div class="markdown-text">${window.marked ? marked.parse(m.content) : m.content}</div>
                             <div style="font-size:0.7em;color:#888;text-align:right;">${m.timestamp}</div>
                         </div>
                     </div>
@@ -169,33 +183,38 @@
             chatMessages.innerHTML = '<div style="color:#888;">No messages yet.</div>';
         }
 
+        // Load marked.js for markdown rendering
+        if (!window.marked) {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+            script.onload = () => {
+                document.querySelectorAll('.markdown-text').forEach(el => {
+                    el.innerHTML = window.marked.parse(el.textContent);
+                });
+            };
+            document.head.appendChild(script);
+        }
         let ws = null;
 
         document.getElementById('send-message-form').onsubmit = async function(e) {
             e.preventDefault();
             const message = document.getElementById('message-input').value;
             if (!message) return;
-
             const userId = USER_ID;
-
             // Initialize WebSocket if not connected
             if (!ws || ws.readyState !== WebSocket.OPEN) {
                 ws = new WebSocket('ws://localhost:8001/send-message');
-
                 ws.onopen = function() {
                     ws.send(JSON.stringify({ message, chatid: chatId, userid: userId }));
                 };
-
                 ws.onmessage = function(event) {
                     const data = JSON.parse(event.data);
                     if (data.status === 'success' && data.result) {
                         const chatMessages = document.getElementById('chat-messages');
-
-                        // AI response
                         chatMessages.innerHTML += `
                             <div style="display:flex;justify-content:flex-start;margin-bottom:0.5em;">
                                 <div style="background:#e1f0ff;padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
-                                    ${data.result}
+                                    <div class="markdown-text">${window.marked ? marked.parse(data.result) : data.result}</div>
                                     <div style="font-size:0.7em;color:#888;text-align:right;">${new Date().toLocaleTimeString()}</div>
                                 </div>
                             </div>
@@ -203,29 +222,132 @@
                         chatMessages.scrollTop = chatMessages.scrollHeight;
                     }
                 };
-
                 ws.onerror = function(err) {
                     console.error('WebSocket error:', err);
                 };
-
                 ws.onclose = function() {
                     console.log('WebSocket closed.');
                 };
             } else {
                 ws.send(JSON.stringify({ message, chatid: chatId, userid: userId }));
             }
-
             // Append user's message immediately
             chatMessages.innerHTML += `
                 <div style="display:flex;justify-content:flex-end;margin-bottom:0.5em;">
                     <div style="background:#dcdcdc;padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
-                         ${message}
+                        <div class="markdown-text">${window.marked ? marked.parse(message) : message}</div>
                         <div style="font-size:0.7em;color:#888;text-align:right;">${new Date().toLocaleTimeString()}</div>
                     </div>
                 </div>
             `;
             document.getElementById('message-input').value = '';
             chatMessages.scrollTop = chatMessages.scrollHeight;
+        };
+
+        // Audio recording and sending logic
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        const micBtn = document.getElementById('mic-btn');
+        const micIcon = document.getElementById('mic-icon');
+        micBtn.onclick = async function() {
+            if (!isRecording) {
+                // Start recording
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    alert('Audio recording not supported.');
+                    return;
+                }
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    let mimeType = '';
+                    if (MediaRecorder.isTypeSupported('audio/webm')) {
+                        mimeType = 'audio/webm';
+                    } else if (MediaRecorder.isTypeSupported('audio/wav')) {
+                        mimeType = 'audio/wav';
+                    } else {
+                        mimeType = '';
+                    }
+                    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => {
+                        if (e.data.size > 0) audioChunks.push(e.data);
+                    };
+                    mediaRecorder.onstop = async () => {
+                        // Prefer wav, else webm
+                        let audioBlob;
+                        if (mimeType === 'audio/wav') {
+                            audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        } else {
+                            audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        }
+                        const recordedAudioUrl = URL.createObjectURL(audioBlob);
+                        // Send audio to FastAPI websocket endpoint
+                        const userId = USER_ID;
+                        const wsAudio = new WebSocket('ws://localhost:8001/send-audio-message');
+                        wsAudio.binaryType = 'arraybuffer';
+                        wsAudio.onopen = function() {
+                            wsAudio.send(JSON.stringify({ chatid: chatId, userid: userId }));
+                            audioBlob.arrayBuffer().then(buffer => {
+                                wsAudio.send(buffer);
+                            });
+                        };
+                        let transcription = '';
+                        let llm_response = '';
+                        let synthesizedAudioUrl = '';
+                        wsAudio.onmessage = function(event) {
+                            if (typeof event.data === 'string') {
+                                const data = JSON.parse(event.data);
+                                if (data.status === 'success') {
+                                    transcription = data.transcription;
+                                    llm_response = data.llm_response;
+                                    // Wait for synthesized audio before rendering
+                                }
+                            } else {
+                                // Second message: audio bytes
+                                const audioBlobSynth = new Blob([event.data], { type: 'audio/mp3' });
+                                synthesizedAudioUrl = URL.createObjectURL(audioBlobSynth);
+                                // Render both audios above their respective texts in chat
+                                const chatMessages = document.getElementById('chat-messages');
+                                chatMessages.innerHTML += `
+                                    <div style="display:flex;justify-content:flex-end;margin-bottom:0.5em;">
+                                        <div style="background:#dcdcdc;padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
+                                            <audio controls src="${recordedAudioUrl}" style="width:100%;margin-bottom:0.3em;"></audio>
+                                            <div class="markdown-text">${window.marked ? marked.parse(transcription) : transcription}</div>
+                                            <div style="font-size:0.7em;color:#888;text-align:right;">${new Date().toLocaleTimeString()}</div>
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;justify-content:flex-start;margin-bottom:0.5em;">
+                                        <div style="background:#e1f0ff;padding:0.5em 0.8em;border-radius:8px;max-width:70%;">
+                                            <audio controls src="${synthesizedAudioUrl}" style="width:100%;margin-bottom:0.3em;"></audio>
+                                            <div class="markdown-text">${window.marked ? marked.parse(llm_response) : llm_response}</div>
+                                            <div style="font-size:0.7em;color:#888;text-align:right;">${new Date().toLocaleTimeString()}</div>
+                                        </div>
+                                    </div>
+                                `;
+                                chatMessages.scrollTop = chatMessages.scrollHeight;
+                            }
+                        };
+                        wsAudio.onerror = function(err) {
+                            console.error('WebSocket audio error:', err);
+                        };
+                        wsAudio.onclose = function() {
+                            console.log('WebSocket audio closed.');
+                        };
+                    };
+                    mediaRecorder.start();
+                    isRecording = true;
+                    micIcon.innerHTML = '&#9632;'; // Stop icon
+                } catch (err) {
+                    alert('Could not start audio recording: ' + err);
+                }
+            } else {
+                // Stop recording
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+                isRecording = false;
+                micIcon.innerHTML = '&#127908;'; // Mic icon
+            }
         };
     }
 

@@ -1,13 +1,23 @@
 
+from pydub import AudioSegment
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import Runnable
 from LLMs import get_llm
+from TTSs import get_tts
+from STTs import get_stt
 import asyncio
+import os
+from io import BytesIO
+
 
 from core.models import User, Chat, Message, Agent
 from asgiref.sync import sync_to_async
+from dotenv import load_dotenv
 
-llm = get_llm("gemini")
+load_dotenv()
+llm = get_llm(os.environ.get("LLM", "gpt"))
+tts = get_tts(os.environ.get("TTS", "openai"))
+stt = get_stt(os.environ.get("STT", "openai"))
 
 template = """
 You are an agent who acts as the instructions porvided below.
@@ -50,23 +60,53 @@ async def process_message(message, chatid, userid):
     user = await sync_to_async(User.objects.get)(id=userid)
     chat = await sync_to_async(Chat.objects.get)(id=chatid, user=user)
     messages = await sync_to_async(lambda: list(Message.objects.filter(chat=chat).order_by('-timestamp')[:10]))()
-    message_texts = [msg.content for msg in messages]
+    message_texts = [msg.content for msg in messages][::-1]
     agent = await sync_to_async(lambda: chat.agent)()
-    user_message = await sync_to_async(Message.objects.create)(chat=chat, user=user, content=message)
+    await sync_to_async(Message.objects.create)(chat=chat, user=user, content=message)
 
     # Call get_response to get LLM reply
     instructions = agent.prompt
 
-    summary = ""  # Use empty string for now
+    summary = chat.summary or ""  # Use empty string if no summary exists
     llm_response = get_response(instructions, message, message_texts, summary)
 
     # Save LLM response as a new message in the database
-    llm_message = await sync_to_async(Message.objects.create)(chat=chat, user=user, content=llm_response, message_by='ai')
+    await sync_to_async(Message.objects.create)(chat=chat, user=user, content=llm_response, message_by='ai')
 
     # Function to be executed in parallel (async summary update)
     asyncio.create_task(update_summary(chat, message_texts, summary))
 
     return llm_response
+
+async def process_audio_message(audio_file: BytesIO, chatid: int, userid: int):
+    user = await sync_to_async(User.objects.get)(id=userid)
+    chat = await sync_to_async(Chat.objects.get)(id=chatid, user=user)
+
+    # Convert audio to WAV for compatibility
+    try:
+        audio = AudioSegment.from_file(audio_file)
+        wav_buffer = BytesIO()
+        wav_buffer.name = "converted.wav"
+        audio.export(wav_buffer, format="wav")
+        wav_buffer.seek(0)
+        transcribed_text = await stt.transcribe(wav_buffer)
+    except Exception as e:
+        # Fallback: try original
+        transcribed_text = await stt.transcribe(audio_file)
+    await sync_to_async(Message.objects.create)(chat=chat, user=user, content=transcribed_text)
+    agent = await sync_to_async(lambda: chat.agent)()
+    messages = await sync_to_async(lambda: list(Message.objects.filter(chat=chat).order_by('-timestamp')[:10]))()
+    message_texts = [msg.content for msg in messages][::-1]
+    instructions = agent.prompt
+    summary = chat.summary or ""  # Use empty string if no summary exists
+    llm_response = get_response(instructions, transcribed_text, message_texts, summary)
+    await sync_to_async(Message.objects.create)(chat=chat, user=user, content=llm_response, message_by='ai')
+    # Function to be executed in parallel (async summary update)
+    asyncio.create_task(update_summary(chat, message_texts, summary))
+    audio_buffer = BytesIO()
+    await tts.synthesize(llm_response, audio_buffer)
+    audio_buffer.seek(0)
+    return transcribed_text, llm_response, audio_buffer
 
 # Async background summary update
 async def update_summary(chat, messages, summary):
