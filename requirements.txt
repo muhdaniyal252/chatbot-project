@@ -11,3 +11,4 @@ djangorestframework-simplejwt
 python-dotenv
 pytest
 pytest-asyncio
+pydub
