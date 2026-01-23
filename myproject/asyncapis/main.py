@@ -23,12 +23,15 @@ app = FastAPI()
 async def websocket_send_message(websocket: WebSocket):
     await websocket.accept()
     while True:
-        data = await websocket.receive_json()
-        message = data.get("message")
-        chatid = data.get("chatid")
-        userid = data.get("userid")
-        result = await process_message(message, chatid, userid)
-        await websocket.send_json({"status": "success", "result": result})
+        try:
+            data = await websocket.receive_json()
+            message = data.get("message")
+            chatid = data.get("chatid")
+            userid = data.get("userid")
+            result = await process_message(message, chatid, userid)
+            await websocket.send_json({"status": "success", "result": result})
+        except Exception as e:
+            await websocket.send_json({"status": "error", "error": str(e)})
 
 @app.websocket("/send-audio-message")
 async def websocket_send_audio_message(websocket: WebSocket):

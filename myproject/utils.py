@@ -43,8 +43,8 @@ prompt_template = PromptTemplate(
 
 chain: Runnable = prompt_template | llm.invoke
 
-def get_response(instructions, user_input, messages, summary):
 
+def get_response(instructions, user_input, messages, summary, llm_instance=None):
     inputs = {
         "instructions": instructions,
         "summary": summary,

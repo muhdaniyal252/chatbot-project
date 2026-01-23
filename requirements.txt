@@ -9,3 +9,5 @@ pydantic
 djangorestframework
 djangorestframework-simplejwt
 python-dotenv
+pytest
+pytest-asyncio
