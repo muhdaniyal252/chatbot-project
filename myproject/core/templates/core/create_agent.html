@@ -4,45 +4,82 @@
 <div class="container">
     <div class="main" style="margin:auto;max-width:400px;">
         <h2 style="text-align:center;">Create Agent</h2>
-        <form id="agent-form" style="background:#fff;padding:2em 2em 1em 2em;border-radius:10px;box-shadow:0 2px 12px #0001;display:flex;flex-direction:column;gap:1em;">
-            <div style="display:flex;flex-direction:column;gap:0.3em;">
-                <label for="name" style="font-weight:bold;">Name</label>
-                <input type="text" id="name" name="name" required style="padding:0.7em;border:1px solid #ccc;border-radius:5px;">
+
+        <form id="agent-form"
+              enctype="multipart/form-data"
+              style="background:#fff;padding:2em;border-radius:10px;
+                     box-shadow:0 2px 12px #0001;
+                     display:flex;flex-direction:column;gap:1em;">
+
+            <div>
+                <label><b>Name</b></label>
+                <input type="text" id="name" required
+                       style="width:100%;padding:0.7em;">
             </div>
-            <div style="display:flex;flex-direction:column;gap:0.3em;">
-                <label for="prompt" style="font-weight:bold;">Prompt</label>
-                <textarea id="prompt" name="prompt" rows="3" style="padding:0.7em;border:1px solid #ccc;border-radius:5px;"></textarea>
+
+            <div>
+                <label><b>Prompt</b></label>
+                <textarea id="prompt" rows="3"
+                          style="width:100%;padding:0.7em;"></textarea>
             </div>
-            <button type="submit" style="padding:0.7em;background:#333;color:#fff;border:none;border-radius:5px;font-weight:bold;cursor:pointer;transition:background 0.2s;">Create Agent</button>
+
+            <div>
+                <label><b>PDF (optional)</b></label>
+                <input type="file" id="pdf" accept="application/pdf">
+            </div>
+
+            <button type="submit"
+                    style="padding:0.7em;background:#333;color:#fff;
+                           border:none;border-radius:5px;font-weight:bold;">
+                Create Agent
+            </button>
         </form>
+
         <div id="agent-result" style="margin-top:1em;text-align:center;"></div>
     </div>
 </div>
 {% endblock %}
 {% block extra_js %}
 <script>
-    document.getElementById('agent-form').onsubmit = async function(e) {
-        e.preventDefault();
-        const name = document.getElementById('name').value;
-        const prompt = document.getElementById('prompt').value;
-        const token = localStorage.getItem('access');
-        const response = await fetch("{% url 'create_agent' %}", {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? 'Bearer ' + token : ''
-            },
-            body: JSON.stringify({ name, prompt })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            document.getElementById('agent-result').innerText = 'Agent created! Redirecting...';
-            setTimeout(() => {
-                window.location.href = "{% url 'chat_home' %}";
-            }, 1000);
-        } else {
-            document.getElementById('agent-result').innerText = data.error || 'Failed to create agent.';
+document.getElementById('agent-form').onsubmit = async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData();
+    formData.append('name', document.getElementById('name').value);
+    formData.append('prompt', document.getElementById('prompt').value);
+
+    const pdf = document.getElementById('pdf').files[0];
+    if (pdf) {
+        if (pdf.type !== 'application/pdf') {
+            document.getElementById('agent-result').innerText =
+                'Only PDF files are allowed.';
+            return;
         }
-    };
+        formData.append('pdf', pdf);
+    }
+
+    const token = localStorage.getItem('access');
+
+    const response = await fetch("{% url 'create_agent' %}", {
+        method: 'POST',
+        headers: {
+            'Authorization': token ? 'Bearer ' + token : ''
+        },
+        body: formData
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+        document.getElementById('agent-result').innerText =
+            'Agent created! Redirecting...';
+        setTimeout(() => {
+            window.location.href = "{% url 'chat_home' %}";
+        }, 1000);
+    } else {
+        document.getElementById('agent-result').innerText =
+            data.error || 'Failed to create agent.';
+    }
+};
 </script>
 {% endblock %}

@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
+from PyPDF2 import PdfReader
 from .models import Agent, Chat, Message
 
 # API endpoint to list messages for a chat
@@ -109,24 +110,59 @@ class LoginView(APIView):
 		else:
 			return Response({'error': 'Invalid credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
 
-# Create Agent page (GET) and handle creation (POST)
 @method_decorator(csrf_exempt, name='dispatch')
 class CreateAgentView(APIView):
-	def get(self, request):
-		return render(request, 'core/create_agent.html')
+    def get(self, request):
+        return render(request, 'core/create_agent.html')
 
-	def post(self, request):
-		import json
-		data = request.data if hasattr(request, 'data') else json.loads(request.body)
-		name = data.get('name')
-		prompt = data.get('prompt')
-		user = request.user if request.user.is_authenticated else None
-		if not user:
-			return Response({'error': 'Authentication required.'}, status=401)
-		if not name:
-			return Response({'error': 'Name required.'}, status=400)
-		agent = Agent.objects.create(name=name, prompt=prompt or '', user=user)
-		return Response({'success': True, 'id': agent.id}, status=201) # type: ignore
+    def post(self, request):
+        data = request.data
+        name = data.get('name')
+        prompt = data.get('prompt', '')
+        pdf_file = request.FILES.get('pdf')
+
+        user = request.user if request.user.is_authenticated else None
+        if not user:
+            return Response({'error': 'Authentication required.'}, status=401)
+
+        if not name:
+            return Response({'error': 'Name required.'}, status=400)
+
+        pdf_text = ""
+
+        # ✅ If PDF is uploaded, validate & extract
+        if pdf_file:
+            if not pdf_file.name.lower().endswith('.pdf'):
+                return Response(
+                    {'error': 'Only PDF files are allowed.'},
+                    status=400
+                )
+
+            try:
+                reader = PdfReader(pdf_file)
+                for page in reader.pages:
+                    pdf_text += page.extract_text() or ""
+            except Exception:
+                return Response(
+                    {'error': 'Failed to read PDF file.'},
+                    status=400
+                )
+
+        # ✅ Concatenate prompt + pdf text
+        final_prompt = prompt
+        if pdf_text.strip():
+            final_prompt = f"{prompt}\n\n{pdf_text}"
+
+        agent = Agent.objects.create(
+            name=name,
+            prompt=final_prompt,
+            user=user
+        )
+
+        return Response(
+            {'success': True, 'id': agent.id},
+            status=201
+        )
 
 @method_decorator(csrf_exempt, name='dispatch')
 class UpdateAgentView(APIView):
